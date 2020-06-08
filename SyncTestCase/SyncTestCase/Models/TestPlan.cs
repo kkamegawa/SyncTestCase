@@ -60,7 +60,7 @@ namespace SyncTestCase.Models
 
     public class Rootsuite
     {
-        public string id { get; set; }
+        public int id { get; set; }
         public string name { get; set; }
         public string url { get; set; }
     }
@@ -86,6 +86,15 @@ namespace SyncTestCase.Models
         [JsonConverter(typeof(DateFormatConverter), "yyyy-MM-dd")]
         [JsonProperty(PropertyName = "endDate")]
         public DateTime EndDate { get; set; }
+
+        [JsonProperty(PropertyName = "areaPath")]
+        public string AreaPath { get; set; }
+
+        [JsonProperty(PropertyName = "iteration")]
+        public string Iteration { get; set; }
+
+        [JsonProperty(PropertyName = "state")]
+        public string State { get; set; }
 
         [JsonIgnore]
         public int ID { get; set; }
@@ -141,10 +150,10 @@ namespace SyncTestCase.Models
         public string Operation { get; set; }
 
         [JsonProperty(PropertyName = "path")]
-        public const string Path = "/fields/System.Title";
+        public string Path = "/fields/System.Title";
 
         [JsonProperty(PropertyName = "value")]
-        public string CaseName { get; set; }
+        public string Value { get; set; }
         [JsonIgnore]
         public int ID { get; set; }  // Test Case ID
         [JsonIgnore]
@@ -159,10 +168,10 @@ namespace SyncTestCase.Models
     public class TestStep
     {
         [JsonProperty(PropertyName = "op")]
-        public const string Operation = "add"; // operation
+        public string Operation = "add"; // operation
 
         [JsonProperty(PropertyName = "path")]
-        public const string Path = "/fields/Microsoft.VSTS.TCM.Steps"; // Test Case Path
+        public string Path = "/fields/Microsoft.VSTS.TCM.Steps"; // Test Case Path
 
         [JsonProperty(PropertyName = "value")]
         public string Value;

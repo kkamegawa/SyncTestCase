@@ -19,7 +19,7 @@ namespace SyncTestCase.Models
 
     public class Testcase
     {
-        public string id { get; set; }
+        public int id { get; set; }
         public string url { get; set; }
         public string webUrl { get; set; }
     }
@@ -32,13 +32,13 @@ namespace SyncTestCase.Models
 
     public class Configuration
     {
-        public string id { get; set; }
+        public int id { get; set; }
         public string name { get; set; }
     }
 
     public class Tester
     {
-        public string id { get; set; }
+        public int id { get; set; }
         public string displayName { get; set; }
         public string uniqueName { get; set; }
         public string url { get; set; }
