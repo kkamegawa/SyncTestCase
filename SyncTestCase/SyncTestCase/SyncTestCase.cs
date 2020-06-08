@@ -34,11 +34,6 @@ namespace SyncTestCase
         static Workbook TestWorkBook;
         public static string HttpEndpoint;
         public static string Token;
-        public static TestPlanRootobject TestPlanResultObject { get; private set; }
-        public static TestSuiteRootObject TestSuiteResultObject { get; private set; }
-        public static TestCaseRootobject TestCaseResultObject { get; private set; }
-        public static TestCaseRelationRootobject TestRelationResultObject { get; private set; }
-        public static UpdateTestCaseRootobject TestCaseUpdateResultObject { get; private set; }
 
         static TestPlan TestPlan { get; set; }
 
@@ -47,7 +42,7 @@ namespace SyncTestCase
         static ILogger Log;
 
         /// <summary>
-        /// SwwharePointにあるExcelファイルのURLを受け取って、Azure DevOpsへREST APIを使ってテストケースを登録する
+        /// ExcelファイルのURLを受け取って、Azure DevOpsへREST APIを使ってテストケースを登録する
         /// </summary>
         /// <param name="req"></param>
         /// <param name="log"></param>
@@ -79,6 +74,10 @@ namespace SyncTestCase
             {
                 // 登録
                 result = await RegisterTest2AzureDevOps();
+                if (!result)
+                {
+                    log.LogError(string.Format($"Failed : register Excel File to Azure DevOps"));
+                }
             }
 
             return result
@@ -86,11 +85,11 @@ namespace SyncTestCase
                 : new BadRequestObjectResult($"{excelUri} is invalid file. Please check your test sheet.");
         }
 
-        private static void Initialize()
+        static void Initialize()
         {
             if (string.IsNullOrEmpty(Token))
             {
-                string personalAccessToken = ""; Environment.GetEnvironmentVariable("AZUREDEVOPS_PAT");
+                string personalAccessToken = Environment.GetEnvironmentVariable("AZUREDEVOPS_PAT");
                 Token = Convert.ToBase64String(ASCIIEncoding.ASCII.GetBytes(string.Format("{0}:{1}", "", personalAccessToken)));
             }
 
@@ -103,6 +102,37 @@ namespace SyncTestCase
             {
                 TestWorkBook = new Workbook();
             }
+        }
+
+        public static async Task<string> InvokeRestAPIDelete(string pathFormat,
+            string contentType = "application/json")
+        {
+            string responseBody = string.Empty;
+
+            HttpResponseMessage response;
+            var uri = new Uri(new Uri(HttpEndpoint), relativeUri: pathFormat);
+            httpClient.DefaultRequestHeaders.Accept.Clear();
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Token);
+            httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            try
+            {
+                using (response = await httpClient.DeleteAsync(uri.AbsoluteUri))
+                {
+                    var statusCode = response.EnsureSuccessStatusCode();
+                    if (statusCode.StatusCode != System.Net.HttpStatusCode.OK)
+                    {
+                        Log.LogError(string.Format($"NG:{statusCode.StatusCode}"));
+                    }
+                    responseBody = await response.Content.ReadAsStringAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.LogError(string.Format($"Exception{ex.Message}, {responseBody}"));
+                throw;
+            }
+
+            return responseBody;
         }
 
         public static async Task<string> InvokeRestAPIPost(string jsonValue, string pathFormat, 
@@ -144,10 +174,10 @@ namespace SyncTestCase
             var uri = new Uri(new Uri(HttpEndpoint), relativeUri: pathFormat);
             httpClient.DefaultRequestHeaders.Accept.Clear();
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Token);
-            httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json-patch+json"));
+            httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             try
             {
-                using (response = await httpClient.PatchAsync(uri.AbsoluteUri, new StringContent(jsonValue, Encoding.UTF8, "application/json")))
+                using (response = await httpClient.PatchAsync(uri.AbsoluteUri, new StringContent(jsonValue, Encoding.UTF8, "application/json-patch+json")))
                 {
                     var statusCode = response.EnsureSuccessStatusCode();
                     if (statusCode.StatusCode != System.Net.HttpStatusCode.OK)
@@ -166,50 +196,53 @@ namespace SyncTestCase
         }
 
         /// <summary>
-        /// テスト計画を作る
+        /// Create Test Plans
         /// </summary>
         /// <param name="planName"></param>
         /// <returns></returns>
-        static async Task<bool>CreateTestPlan(TestPlan testPlan)
+        static async Task<TestPlanRootobject> CreateTestPlan(TestPlan testPlan)
         {
-            bool functionResult = true;
-            
+            TestPlanRootobject testPlanRootobject = new TestPlanRootobject();
+
+
             testPlan.StartDate = DateTime.Now;
-            testPlan.EndDate = testPlan.StartDate.AddDays(14);//デモなので二週間固定で
+            testPlan.EndDate = testPlan.StartDate.AddDays(14);//Just Sample fix 2weeks.
             var json = JsonConvert.SerializeObject(testPlan);
 
             Log.LogInformation(string.Format($"Test Plan {testPlan.Name}"));
-
-            var result = await InvokeRestAPIPost(json, "test/plans?api-version=5.0-preview.2");
+            // https://docs.microsoft.com/en-us/rest/api/azure/devops/testplan/test%20%20suites/create?view=azure-devops-rest-6.0
+            var result = await InvokeRestAPIPost(json, "testplan/plans?api-version=6.0-preview.1");
             if(string.IsNullOrEmpty(result))
             {
-                functionResult = false;
                 Log.LogError($"CreateTestPlan {testPlan.Name} create failed.");
             }
             else
             {
-                var resultObject = JsonConvert.DeserializeObject<TestPlanRootobject>(result);
-                testPlan.ID = resultObject.id;
-                int suiteID = 0;
-                
-                if(int.TryParse(resultObject.rootSuite.id, out suiteID) == true)
-                {
-                    testPlan.SuiteRootID = suiteID;
-                }
+                // Test Plan from Azure DevOps
+                testPlanRootobject = JsonConvert.DeserializeObject<TestPlanRootobject>(result);
             }
             Log.LogInformation(string.Format($"Test Plan {testPlan.Name} End"));
-            return functionResult;
+            return testPlanRootobject;
         }
 
+        /// <summary>
+        /// Create and encode html for Work Items in Test repro steps
+        /// </summary>
+        /// <param name="steps">step of test</param>
+        /// <returns>encoded html string</returns>
         public static string EncodeHtmlString(TestStep steps)
         {
             var sb = new StringBuilder();
-            sb.Append(string.Format($"<steps id=\\\"0\\\" last=\\\"{steps.StepRepro.Count + 1}\\\">"));
+            sb.Append(string.Format($"<steps id=\"0\">"));
 
+            string repoStep = default(string);
+            string expectStep = default(string);
             for (int i = 0; i < steps.StepRepro.Count; i++)
             {
-                sb.Append(string.Format($"<step id=\\\"{i + 2}\\\" type=\\\"ValidateStep\\\"><parameterizedString isformatted=\\\"true\\\">&lt;DIV&gt;&lt;P&gt;{steps.StepRepro[i]}&amp;nbsp;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString>"));
-                sb.Append(string.Format($"<parameterizedString isformatted=\\\"true\\\">&lt;P&gt;{steps.StepExpected[i]}&amp;nbsp;&lt;/P&gt;</parameterizedString><description/></step>"));
+                repoStep = System.Web.HttpUtility.HtmlEncode(steps.StepRepro[i]);
+                expectStep = System.Web.HttpUtility.HtmlEncode(steps.StepExpected[i]);
+                sb.Append(string.Format($"<step id=\"{i + 2}\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;{repoStep}&amp;nbsp;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString>"));
+                sb.Append(string.Format($"<parameterizedString isformatted=\"true\">&lt;P&gt;{expectStep}&amp;nbsp;&lt;/P&gt;</parameterizedString><description/></step>"));
             }
             sb.Append("</steps>");
 
@@ -217,7 +250,7 @@ namespace SyncTestCase
         }
 
         /// <summary>
-        /// テストケースの作成
+        /// Create Work Item for Test and Test repro steps.
         /// </summary>
         /// <param name="testPlanID"></param>
         /// <param name="testSuiteID"></param>
@@ -229,58 +262,40 @@ namespace SyncTestCase
 
             Log.LogInformation(string.Format($"PlanID:{testPlanID}, SuiteID:{testSuiteID} Test Case Start"));
 
-            TestCaseRootobject resultObject = null;
-            var json = JsonConvert.SerializeObject(testCase);
-            Log.LogInformation(string.Format($"TestSuiteID:{testSuiteID}'s Test Case") + json);
-            var result = await InvokeRestAPIPost(json,
-                "wit/workitems/$Test%20Case?api-version=5.0-preview.3",
-                "application/json-patch+json");
-            if (string.IsNullOrEmpty(result))
+            foreach (var item in testCase)
             {
-                Log.LogError($"TestSuite {testSuiteID}'s TestCase  create failed.");
-                return false;
-            }
-            else
-            {
-                resultObject = JsonConvert.DeserializeObject<TestCaseRootobject>(result);
-                for(int i = 0;i< testCase.Length; i++)
+                var steps = EncodeHtmlString(item.TestStep);
+                var registeringTestSteps = new TestCase[]
                 {
-                    testCase[i].ID = resultObject.id;
-                }
-            }
+                    new TestCase{Value = item.Value, Operation = "add", Path = "/fields/System.Title"},
+                    new TestCase{Value = steps, Operation = "add", Path = "/fields/Microsoft.VSTS.TCM.Steps"},
+                };
 
-            //関連付け
-            result = await InvokeRestAPIPost(string.Empty,
-                string.Format($"test/Plans/{testPlanID}/suites/{testSuiteID}/testcases/{resultObject.id}?api-version=5.0-preview.3"));
-            if (string.IsNullOrEmpty(result))
-            {
-                Log.LogError($"TestCase {testSuiteID} create relation failed.");
-                return false;
-            }
-            else
-            {
-                /* in testing
-                foreach(var item in testCase)
+                TestCaseRootobject resultObject = null;
+                var json = JsonConvert.SerializeObject(registeringTestSteps);
+                Log.LogInformation(string.Format($"Test Work Item:{item.Value}'s Test Case") + json);
+                // https://docs.microsoft.com/en-us/rest/api/azure/devops/wit/work%20items/create?view=azure-devops-rest-6.0
+                var result = await InvokeRestAPIPost(json,
+                    "wit/workitems/$Test%20Case?api-version=6.0-preview.3", "application/json-patch+json");
+                if (string.IsNullOrEmpty(result))
                 {
-                    Log.LogInformation(string.Format($"Test Case {item.CaseName} Start"));
-                    if (item.TestStep.StepRepro.Count > 0)
-                    {
-                        // テストステップはhtmlエンコードしないといけない
-                        item.TestStep.Value = EncodeHtmlString(item.TestStep);
-                        json = JsonConvert.SerializeObject(item.TestStep);
-
-                        result = await InvokeRestAPIPatch(json,
-                            $"wit/workitems/{item.ID}?api-version=5.0-preview.3");
-                        if (string.IsNullOrEmpty(result))
-                        {
-                            Log.LogError($"TestStep in {item.CaseName} register failed.");
-                            return false;
-                        }
-
-                        var updateResult = JsonConvert.DeserializeObject<UpdateTestCaseRootobject>(result);
-                    }
+                    Log.LogError($"Test Work Item:{item.Value}'s TestCase  create failed.");
+                    return false;
                 }
-                */
+                else
+                {
+                    resultObject = JsonConvert.DeserializeObject<TestCaseRootobject>(result);
+                }
+
+                // create association to Test Plan
+                result = await InvokeRestAPIPost(string.Empty,
+                    string.Format($"test/Plans/{testPlanID}/suites/{testSuiteID}/testcases/{resultObject.id}?api-version=6.0-preview.3"));
+                if (string.IsNullOrEmpty(result))
+                {
+                    Log.LogError($"TestCase {testSuiteID} create relation failed.");
+                    return false;
+                }
+
             }
             Log.LogInformation(string.Format($"Suite ID:{testSuiteID}'s Test Case End"));
 
@@ -293,65 +308,69 @@ namespace SyncTestCase
         /// <param name="testPlanID"></param>
         /// <param name="testSuite"></param>
         /// <returns></returns>
-        static async Task<bool>CreateTestSuite(int testPlanID, TestSuite testSuite)
+        static async Task<TestSuiteResultRootobject> CreateTestSuite(int testPlanID, TestSuite testSuite)
         {
-            bool functionResult = true;
+            TestSuiteResultRootobject testSuiteformAzureDevOps = new TestSuiteResultRootobject();
             var json = JsonConvert.SerializeObject(testSuite);
             Log.LogInformation(string.Format($"Plan id :{testPlanID}, Root Suite:{testSuite.Parent.ParentID} Test Suite {testSuite.Name} Start"));
             Log.LogInformation(json);
+
+            // https://docs.microsoft.com/en-us/rest/api/azure/devops/testplan/test%20%20plans/create?view=azure-devops-rest-6.0
             var result = await InvokeRestAPIPost(json,
-                string.Format($"testplan/Plans/{testPlanID}/suites/?api-version=5.0-preview.1"));
+                string.Format($"testplan/Plans/{testPlanID}/suites/?api-version=6.0-preview.1"));
             if (string.IsNullOrEmpty(result))
             {
-                functionResult = false;
                 Log.LogError($"TestSuite {testSuite.Name} create failed.");
             }
             else
             {
-                var resultObject = JsonConvert.DeserializeObject<TestSuiteResultRootobject>(result);
-                testSuite.ID = resultObject.id;
+                testSuiteformAzureDevOps = JsonConvert.DeserializeObject<TestSuiteResultRootobject>(result);
             }
             Log.LogInformation(string.Format($"Test Case {testSuite.Name} end"));
 
-            return functionResult;
+            return testSuiteformAzureDevOps;
         }
 
         /// <summary>
-        /// Azure DevOpsへのREST API実行
+        /// Invoke-Rest API to Azure DevOps
+        /// 1. create Test Suite
+        /// 2. create Test Plan
+        /// 3. create Work Item(Type:Test) and add test repro step.
         /// </summary>
         /// <returns></returns>
         static async Task<bool>RegisterTest2AzureDevOps()
         {
             bool functionResult = true;
+            TestSuiteResultRootobject testSuiteResultRootfromAzureDevOps = new TestSuiteResultRootobject();
 
-            functionResult = await CreateTestPlan(TestPlan);
-            if (!functionResult)
+            var testPlanfromAzureDevOps = await CreateTestPlan(TestPlan);
+            if (testPlanfromAzureDevOps == null)
             {
                 Log.LogError($"TestPlan {TestPlan.Name} create failed.");
-                return functionResult;
+                return false;
             }
 
-            //書き換える必要があるので、foreachではNG
             for(int i = 0;i < TestPlan.TestSuites.Count;i++)
             {
-                TestPlan.TestSuites[i].Parent.ParentID = TestPlan.SuiteRootID;
-                functionResult = await CreateTestSuite(TestPlan.ID, TestPlan.TestSuites[i]);
-                if (!functionResult)
+                TestPlan.TestSuites[i].Parent.ParentID = testPlanfromAzureDevOps.rootSuite.id;
+                testSuiteResultRootfromAzureDevOps = await CreateTestSuite(testPlanfromAzureDevOps.id, 
+                    TestPlan.TestSuites[i]);
+                if (testSuiteResultRootfromAzureDevOps == null)
                 {
                     Log.LogError($"TestSuite {TestPlan.TestSuites[i].Name} create failed.");
-                    return functionResult;
+                    return false;
                 }
                 else
                 {
                     for(int j = 0; j < TestPlan.TestSuites[i].TestCases.Count; j++)
                     {
                         functionResult = await CreateTestCase(
-                            TestPlan.ID,
-                            TestPlan.TestSuites[i].ID,
+                            testPlanfromAzureDevOps.id,
+                            testSuiteResultRootfromAzureDevOps.id,
                             TestPlan.TestSuites[i].TestCases.ToArray());
                         if (!functionResult)
                         {
-                            Log.LogError($"TestCase No.{TestPlan.TestSuites[i].ID} is {TestPlan.TestSuites[i].Name} test case {TestPlan.TestSuites[i].TestCases[j].CaseName} create failed.");
+                            Log.LogError($"TestCase No.{TestPlan.TestSuites[i].ID} is {TestPlan.TestSuites[i].Name} test case {TestPlan.TestSuites[i].TestCases[j].Value} create failed.");
                             return functionResult;
                         }
                     }
@@ -394,39 +413,53 @@ namespace SyncTestCase
                 }
 
                 var wsheetPart = wbPart.GetPartById(sheet.Id) as WorksheetPart;
-                // Test Planはタブの名前
+                // Tab name is name of Test Plan
                 TestPlan = new TestPlan();
                 TestPlan.Name = sheet.Name;
 
                 var ws = wsheetPart.Worksheet;
                 List<string[]> testAssets = new List<string[]>();
-                int count = 0;
                 int rownum = 0;
                 char[] columnID = { 'A', 'B', 'C', 'D', };
-                foreach (var row in ws.Descendants<Row>().Skip(1))
+
+                int indexStart = 0;
+                //var suiteTuple = new List<Tuple<int, int>>();
+                foreach (var (row, index) in ws.Descendants<Row>().Skip(1).Indexed())
                 {
                     var cells = row.Elements<Cell>().ToArray();
                     var cellStrings = new string[4];
 
-                    // セルに値が入っていないレコードが出れば処理終了(Excelの空行対応)。
+                    // stopping loop, when all column is empty.
                     if (cells.All(x => x.DataType.HasValue == false))
                     {
+                        CreateTestPlanfromString(testAssets);
                         Log.LogInformation("All Data proceeded.");
                         break;
                     }
-
-                    //各行をとりあえず文字列化して、配列＋リストに突っ込む。
+                    // found Test Suite Row number(all column is fill).
+                    if (cells.All(x => x.DataType.HasValue == true) && cells.Length == 4)
+                    {
+                        if (testAssets.Count() >= 1)
+                        {
+                            CreateTestPlanfromString(testAssets);
+                            testAssets.Clear();
+                        }
+                        //suiteTuple.Add(new Tuple<int, int>(indexStart, index - 1));
+                        indexStart = index;
+                    }
                     for (int i = 0; i < cells.Length; i++)
                     {
                         var currentColunm = cells[i].CellReference.Value.Substring(0, 1).ToCharArray();
-                        rownum = Array.FindIndex(columnID, x => 
+                        rownum = Array.FindIndex(columnID, x =>
                         {
-                            if(x == currentColunm[0])
+                            if (x == currentColunm[0])
                             {
                                 return true;
                             }
                             return false;
                         });
+
+                        // Test Plan or Test Step's row
                         switch (cells[i].DataType.Value)
                         {
                             case CellValues.SharedString:
@@ -437,7 +470,7 @@ namespace SyncTestCase
                                 }
                                 else
                                 {
-                                    Log.LogError($"Invalid Type in row {count}, cell {i}");
+                                    Log.LogError($"Invalid Type in row {index}, cell {i}");
                                 }
                                 break;
                             case CellValues.String:
@@ -448,37 +481,12 @@ namespace SyncTestCase
                                 break;
                         }
                     }
-                    count++;
                     testAssets.Add(cellStrings);
                 }
-
-                //終わったらPlan配下を作る
                 CreateTestPlanfromString(testAssets);
             }
 
             return functionResult;
-        }
-
-        private static int GetFillStatus(string[] testAssets)
-        {
-            int rowStatus = 2; // 0:Test Suite, 1:Test Case, 2:Test Step
-            bool[] columnExist = new bool[4];
-            for(int i =0;i < testAssets.Length; i++)
-            {
-                columnExist[i] = string.IsNullOrEmpty(testAssets[i]);
-            }
-
-            if (columnExist[0] == false && columnExist[1] == false &&
-                columnExist[2] == false && columnExist[3] == false)
-            {
-                return 0;
-            }
-            if(columnExist[0] == true && columnExist[1] == false && 
-                columnExist[2] == false && columnExist[3] == false)
-            {
-                return 1;
-            }
-            return rowStatus;
         }
 
         /// <summary>
@@ -487,88 +495,42 @@ namespace SyncTestCase
         /// <param name="testAssets"></param>
         private static void CreateTestPlanfromString(IList<string[]> testAssets)
         {
-            var caseTuple = new List<Tuple<int, int>>();
-            var suiteTuple = new List<Tuple<int, int>>();
-            int rowStatus = 0; // 0:Test Suite, 1:Test Case, 2:Test Step
+            // Because Row number 0 must be Test Suite, start Row number 1.
+            // Get Test Case's indexes.
+            var indexes = testAssets.Select((p, i) => new { Content = p, Index = i })
+                .Where(x => string.IsNullOrEmpty(x.Content[1]) == false)
+                .Select(x => x.Index).ToList();
 
-            int suiteStartPosition = 0;
-            int caseStartPosition = 0;
-            // 0行目は必ずスィートなので,1行目から
-            for (int i = 1; i < testAssets.Count; i++)
-            {
-                rowStatus = GetFillStatus(testAssets[i]);
-                switch (rowStatus)
+            TestPlan.TestSuites.Add(
+                new TestSuite
                 {
-                    case 0:
-                        suiteTuple.Add(
-                            new Tuple<int, int>(suiteStartPosition, i - 1));
-                        caseTuple.Add(
-                            new Tuple<int, int>(caseStartPosition, i - 1));
-                        suiteStartPosition = i;
-                        break;
-                    case 1:
-                        caseTuple.Add(
-                                new Tuple<int, int>(caseStartPosition, i - 1));
-                        caseStartPosition = i;
-                        break;
-                }
-            }
-            //終了するときクローズする
-            suiteTuple.Add(
-                new Tuple<int, int>(suiteStartPosition, testAssets.Count - 1));
-            caseTuple.Add(
-                new Tuple<int, int>(caseTuple[caseTuple.Count - 1].Item2 + 1, testAssets.Count - 1));
+                    Name = testAssets[0][0]
+                });
 
-            //テストスィート単位で処理
-            for(int j = 0;j < suiteTuple.Count; j++)
+            //processing per test suite
+            int suiteNumber = TestPlan.TestSuites.Count() - 1;
+            int endIndex = 0;
+            for(int i = 0; i < indexes.Count(); i++)
             {
-                TestPlan.TestSuites.Add(
-                    new TestSuite
-                    {
-                        Name = testAssets[suiteTuple[j].Item1][0]
-                    });
-                for (int i = 0;i < caseTuple.Count; i++)
+                TestPlan.TestSuites[suiteNumber].TestCases.Add(new TestCase
                 {
-                    TestPlan.TestSuites[j].TestCases.Add(new TestCase
-                    {
-                        CaseName = testAssets[caseTuple[i].Item1][1]
-                    });
-                    if (caseTuple[i].Item1 >= suiteTuple[j].Item1 && 
-                        caseTuple[i].Item2 <= suiteTuple[j].Item2)
-                    {
-                        IEnumerable<string[]> stepLists;
-                        if(i == 0)
-                        {
-                            stepLists = testAssets.Take(caseTuple[i].Item2 - caseTuple[i].Item1 + 1).Select(x => x);
-                        }
-                        else
-                        {
-                            stepLists = testAssets.Skip(caseTuple[i].Item1)
-                                .Take(caseTuple[i].Item2 - caseTuple[i].Item1 + 1)
-                                .Select(x => x);
-                        }
-                        // 手順
-                        TestPlan.TestSuites[j].TestCases[TestPlan.TestSuites[j].TestCases.Count - 1].TestStep.StepRepro = 
-                            ConvertHolirontalToVertical(stepLists, 2);
-                        // 結果
-                        TestPlan.TestSuites[j].TestCases[TestPlan.TestSuites[j].TestCases.Count - 1].TestStep.StepExpected =
-                            ConvertHolirontalToVertical(stepLists, 3);
-                    }
+                    Value = testAssets[indexes[i]][1]
+                });
+                if(i == indexes.Count() - 1)
+                {
+                    endIndex = testAssets.Count();
                 }
+                else {
+                    endIndex = indexes[i + 1];
+                }
+                var stepLists = testAssets.Skip(indexes[i]).Take(endIndex - indexes[i]).Select(x => x[2]);
+                TestPlan.TestSuites[suiteNumber].TestCases[i].TestStep.StepRepro.AddRange(stepLists);
+
+                var stepExpectLists = testAssets.Skip(indexes[i]).Take(testAssets.Count() - indexes[i]).Select(x => x[3]);
+                TestPlan.TestSuites[suiteNumber].TestCases[i].TestStep.StepExpected.AddRange(stepExpectLists);
             }
         }
 
-        //Excelの縦持ちになっているデータを横持ちにする
-        static List<string>ConvertHolirontalToVertical(IEnumerable<string[]> source, int index)
-        {
-            var resultData = new List<string>();
-            foreach (var item in source)
-            {
-                resultData.Add(item[index]);
-            }
-
-            return resultData;
-        }
 
         private static string GetSharedString(WorkbookPart wb_part, int index)
         {
@@ -586,6 +548,25 @@ namespace SyncTestCase
             {
                 return string.Empty;
             }
+        }
+    }
+    public static partial class TupleEnumerable
+    {
+        public static IEnumerable<(T item, int index)> Indexed<T>(this IEnumerable<T> source)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            IEnumerable<(T item, int index)> impl()
+            {
+                var i = 0;
+                foreach (var item in source)
+                {
+                    yield return (item, i);
+                    ++i;
+                }
+            }
+
+            return impl();
         }
     }
 }

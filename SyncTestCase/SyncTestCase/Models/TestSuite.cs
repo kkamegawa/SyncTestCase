@@ -120,14 +120,14 @@ namespace SyncTestCase.Models
 
     public class TestSuiteRootPlan
     {
-        public string id { get; set; }
+        public int id { get; set; }
         public string name { get; set; }
         public string url { get; set; }
     }
 
     public class Parent
     {
-        public string id { get; set; }
+        public int id { get; set; }
         public string name { get; set; }
         public string url { get; set; }
     }

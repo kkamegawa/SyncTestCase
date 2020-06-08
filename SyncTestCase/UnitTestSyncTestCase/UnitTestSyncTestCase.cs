@@ -16,6 +16,7 @@ namespace UnitTestSyncTestCase
     {
         Uri TestExcelFile;
         string PAT;
+        List<int> RemoveTestCaseID;
         TestPlanRootobject TestPlan;
         TestCaseRootobject TestCase;
         string ExcelUrl = string.Empty;
@@ -24,7 +25,8 @@ namespace UnitTestSyncTestCase
         [TestInitialize]
         public void TestInit()
         {
-            if(string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EXCEL_TEST_URL")) == true)
+            RemoveTestCaseID = new List<int>();
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EXCEL_TEST_URL")) == true)
             {
                 Assert.Fail("Environment variable \"EXCEL_TEST_URL\" is null");
             }
@@ -47,6 +49,19 @@ namespace UnitTestSyncTestCase
             SyncTestCase.SyncTestCase.Token = PAT;
         }
 
+        [TestCleanup]
+        public void TestCleanup()
+        {
+            if (TestPlan != null)
+            {
+                foreach (var testID in RemoveTestCaseID)
+                {
+                    var result = SyncTestCase.SyncTestCase.InvokeRestAPIDelete(
+                        string.Format($"testplan/plans/{testID}?api-version=6.0-preview.1"));
+                }
+            }
+        }
+
         [TestMethod]
         [Priority(0)]
         public async Task ParseExcelTest()
@@ -60,13 +75,12 @@ namespace UnitTestSyncTestCase
         public void EncodeHtmlStringTest()
         {
             TestStep testStep = new TestStep();
-            var expected = "<steps id=\\\"0\\\" last=\\\"4\\\"><step id=\\\"2\\\" type=\\\"ValidateStep\\\"><parameterizedString isformatted=\\\"true\\\">&lt;DIV&gt;&lt;P&gt;1st step&amp;nbsp;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\\\"true\\\">&lt;P&gt;expect 1st&amp;nbsp;&lt;/P&gt;</parameterizedString><description/></step><step id=\\\"3\\\" type=\\\"ValidateStep\\\"><parameterizedString isformatted=\\\"true\\\">&lt;DIV&gt;&lt;P&gt;2nd step&amp;nbsp;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\\\"true\\\">&lt;P&gt;expect 2nd&amp;nbsp;&lt;/P&gt;</parameterizedString><description/></step><step id=\\\"4\\\" type=\\\"ValidateStep\\\"><parameterizedString isformatted=\\\"true\\\">&lt;DIV&gt;&lt;P&gt;3rd step&amp;nbsp;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\\\"true\\\">&lt;P&gt;expect 3rd&amp;nbsp;&lt;/P&gt;</parameterizedString><description/></step></steps>";
+            var expected = "<steps id=\"0\"><step id=\"2\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;1st step&amp;nbsp;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\"true\">&lt;P&gt;expect 1st&amp;nbsp;&lt;/P&gt;</parameterizedString><description/></step><step id=\"3\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;2nd step&amp;nbsp;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\"true\">&lt;P&gt;expect 2nd&amp;nbsp;&lt;/P&gt;</parameterizedString><description/></step><step id=\"4\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;3rd step&amp;nbsp;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\"true\">&lt;P&gt;expect 3rd&amp;nbsp;&lt;/P&gt;</parameterizedString><description/></step></steps>";
             testStep.StepRepro = new List<string> { "1st step", "2nd step", "3rd step" };
-            testStep.StepExpected = new List<string> {"expect 1st", "expect 2nd", "expect 3rd" };
+            testStep.StepExpected = new List<string> { "expect 1st", "expect 2nd", "expect 3rd" };
             var result = SyncTestCase.SyncTestCase.EncodeHtmlString(testStep);
 
             Assert.IsTrue(string.Compare(result, expected) == 0, "テストステップの期待文字列と一致しませんでした");
-
         }
 
         [TestMethod]
@@ -79,22 +93,62 @@ namespace UnitTestSyncTestCase
             testPlan.EndDate = new DateTime(2018, 11, 30);
             var json = JsonConvert.SerializeObject(testPlan);
 
-            var result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json, "test/plans?api-version=5.0-preview.2");
+            var result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json, "testplan/plans?api-version=6.0-preview.1");
+            Assert.IsTrue(string.IsNullOrEmpty(result), "response is null");
             TestPlan = JsonConvert.DeserializeObject<TestPlanRootobject>(result);
+            Assert.IsTrue(TestPlan.id == 0, "REST API failed");
+            RemoveTestCaseID.Add(TestPlan.id);
         }
 
         [TestMethod]
         [Priority(2)]
         public async Task TestCreateTestSuite()
         {
+            var testPlan = new SyncTestCase.Models.TestPlan();
+            testPlan.Name = "API Test Plan_TestSuite";
+            testPlan.StartDate = new DateTime(2018, 11, 1);
+            testPlan.EndDate = new DateTime(2018, 11, 30);
+            var json = JsonConvert.SerializeObject(testPlan);
+
+            var result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json, "testplan/plans?api-version=6.0-preview.1");
+            TestPlan = JsonConvert.DeserializeObject<TestPlanRootobject>(result);
+
+            RemoveTestCaseID.Add(TestPlan.id);
+
             var testSuite = new SyncTestCase.Models.TestSuite();
             testSuite.Name = "API Test Suite";
-            testSuite.ID = TestPlan.id;
-            var json = JsonConvert.SerializeObject(testSuite);
+            testSuite.Parent.ParentID = TestPlan.rootSuite.id;
+            json = JsonConvert.SerializeObject(testSuite);
 
-            var result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json, 
-                string.Format($"testplan/Plans/{TestPlan.id}/suites/?api-version=5.0-preview.1"));
-            var resultObject = JsonConvert.DeserializeObject<TestSuiteRootObject>(result);
+            result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json,
+                string.Format($"testplan/Plans/{TestPlan.id}/suites/?api-version=6.0-preview.1"));
+            var testResult = JsonConvert.DeserializeObject<TestSuiteResultRootobject>(result);
+            if (testResult.id == 0)
+            {
+                Assert.Fail("Response ID is zero");
+            }
+        }
+        [TestMethod]
+        [Priority(2)]
+        public async Task TestWorkItemTest()
+        {
+            TestStep testStepObject = new TestStep();
+            testStepObject.StepRepro = new List<string> { "1st step", "2nd step", "3rd step" };
+            testStepObject.StepExpected = new List<string> { "expect 1st", "expect 2nd", "expect 3rd" };
+            var steps = SyncTestCase.SyncTestCase.EncodeHtmlString(testStepObject);
+            var testCase = new SyncTestCase.Models.TestCase[]
+            {
+                new TestCase{Value = "Test Case 1", Operation = "add", Path = "/fields/System.Title"},
+                new TestCase{Value = steps, Operation = "add", Path = "/fields/Microsoft.VSTS.TCM.Steps"},
+            };
+
+            var json = JsonConvert.SerializeObject(testCase);
+
+            var result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json,
+                "wit/workitems/$Test%20Case?api-version=6.0-preview.3", "application/json-patch+json");
+            TestCase = JsonConvert.DeserializeObject<TestCaseRootobject>(result);
+
+
         }
 
         [TestMethod]
@@ -107,33 +161,34 @@ namespace UnitTestSyncTestCase
             testPlan.EndDate = new DateTime(2018, 11, 30);
             var json = JsonConvert.SerializeObject(testPlan);
 
-            var result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json, "test/plans?api-version=5.0-preview.2");
-            var testPlanResult = JsonConvert.DeserializeObject<TestPlanRootobject>(result);
+            var result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json, "testplan/plans?api-version=6.0-preview.1");
+            TestPlan = JsonConvert.DeserializeObject<TestPlanRootobject>(result);
+            RemoveTestCaseID.Add(TestPlan.id);
 
             var testSuite = new SyncTestCase.Models.TestSuite();
             testSuite.Name = "API Test Suite";
-            testSuite.ID = TestPlan.id;
+            testSuite.Parent.ParentID = TestPlan.rootSuite.id;
             json = JsonConvert.SerializeObject(testSuite);
 
             result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json,
-                string.Format($"test/Plans/{TestPlan.id}/suites/?api-version=5.0-preview.3"));
-            var testSuiteResult = JsonConvert.DeserializeObject<TestSuiteRootObject>(result);
+                string.Format($"testplan/Plans/{TestPlan.id}/suites/?api-version=6.0-preview.1"));
+            var testSuiteResult = JsonConvert.DeserializeObject<TestSuiteResultRootobject>(result);
 
             //テストケース作成
-            var testCase = new SyncTestCase.Models.TestCase[1] 
+            var testCase = new SyncTestCase.Models.TestCase[1]
             {
-                new TestCase{CaseName = "Case 1", Operation = "add"},
+                new TestCase{Value = "Case 1", Operation = "add"},
             };
-            
+
             json = JsonConvert.SerializeObject(testCase);
 
-            result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json, 
-                "wit/workitems/$Test%20Case?api-version=5.0-preview.3");
+            result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json,
+                "wit/workitems/$Test%20Case?api-version=6.0-preview.3", "application/json-patch+json");
             TestCase = JsonConvert.DeserializeObject<TestCaseRootobject>(result);
 
             //関連付け
             result = await SyncTestCase.SyncTestCase.InvokeRestAPIPost(json,
-                string.Format($"test/Plans/{testPlanResult.id}/suites/{testSuiteResult.value[0].id}/testcases/{TestCase.id}?api-version=5.0-preview.3"));
+                string.Format($"test/Plans/{TestPlan.id}/suites/{testSuiteResult.id}/testcases/{TestCase.id}?api-version=6.0-preview.3"));
 
             // ステップ登録
             var testStep = new SyncTestCase.Models.TestStep();
@@ -143,10 +198,11 @@ namespace UnitTestSyncTestCase
             json = JsonConvert.SerializeObject(testStep);
 
             result = await SyncTestCase.SyncTestCase.InvokeRestAPIPatch(json,
-                $"wit/workitems/{TestCase.id}?api-version=5.0-preview.3");
+                $"wit/workitems/{TestCase.id}?api-version=6.0-preview.3");
             var updateResult = JsonConvert.DeserializeObject<UpdateTestCaseRootobject>(result);
 
         }
+
 
     }
 }
