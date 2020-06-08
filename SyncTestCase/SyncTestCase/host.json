@@ -1,3 +1,20 @@
 {
-    "version": "2.0"
+  "version": "2.0",
+  "logger": {
+    "categoryFilter": {
+      "defaultLevel": "Information",
+      "categoryLevels": {
+        "Host": "Error",
+        "Function": "Information",
+        "Host.Aggregator": "Information"
+      }
+    }
+  },
+  "healthMonitor": {
+    "enabled": true,
+    "healthCheckInterval": "00:00:10",
+    "healthCheckWindow": "00:02:00",
+    "healthCheckThreshold": 6,
+    "counterThreshold": 0.80
+  }
 }
