@@ -40,9 +40,9 @@ namespace UnitTestSyncTestCase
                 PAT = Environment.GetEnvironmentVariable("AZUREDEVOPS_PAT");
             }
 
-            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZUREDEVOPS_ENDPOING_URL")) == true)
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZUREDEVOPS_ENDPOINT")) == true)
             {
-                Assert.Fail("Environment variable \"AZUREDEVOPS_ENDPOING_URL\" is null");
+                Assert.Fail("Environment variable \"AZUREDEVOPS_ENDPOINT\" is null");
             }
             SyncTestCase.SyncTestCase.HttpEndpoint = AzureDevOpsEndpoing;
             PAT = Convert.ToBase64String(ASCIIEncoding.ASCII.GetBytes(string.Format("{0}:{1}", "", PAT)));
